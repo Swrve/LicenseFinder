@@ -3,34 +3,190 @@
 [![Build Status](https://secure.travis-ci.org/pivotal/LicenseFinder.png)](http://travis-ci.org/pivotal/LicenseFinder)
 [![Code Climate](https://codeclimate.com/github/pivotal/LicenseFinder.png)](https://codeclimate.com/github/pivotal/LicenseFinder)
 
-With bundler and other dependency management tools, it's easy for your project to depend on many packages.  This decomposition is nice, but managing licenses becomes difficult.  License Finder gathers info about the licenses of the packages in your project.
+LicenseFinder works with your package managers to find dependencies,
+detect the licenses of the packages in them, compare those licenses
+against a user-defined whitelist, and give you an actionable exception
+report.
 
-License Finder currently supports ruby gems, python eggs, and node modules. If you are looking to manage licenses on a java/maven project, we recommend using the [license maven plugin](http://mojo.codehaus.org/license-maven-plugin/).
+* code: https://github.com/pivotal/LicenseFinder
+* support:
+  * license-finder@googlegroups.com
+  * https://groups.google.com/forum/#!forum/license-finder
+* backlog: https://www.pivotaltracker.com/s/projects/234851
+
+### Supported project types
+
+* Ruby Gems (via `bundler`)
+* Python Eggs (via `pip`)
+* Node.js (via `npm`)
+* Bower
+
+### Experimental project types
+
+* Java (via `maven`)
+* Java (via `gradle`)
+* Erlang (via `rebar`)
+* Objective-C (+ CocoaPods)
+* Nuget (without license discovery)
 
 
 ## Installation
 
-Add license_finder to your project's Gemfile and `bundle`:
+License Finder requires Ruby 1.9.3 or greater to run. If you have an older
+version of Ruby installed, you can update via Homebrew:
+
+```sh
+$ ruby -e "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/master/install)"
+```
+
+then:
+
+```sh
+$ brew install ruby
+```
+
+The easiest way to use `license_finder` is to install it as a command
+line tool, like brew, awk, gem or bundler:
+
+```sh
+$ gem install license_finder
+```
+
+Though it's less preferable, if you are using bundler in a Ruby
+project, you can add `license_finder` to your Gemfile:
 
 ```ruby
-gem 'license_finder'
+gem 'license_finder', :group => :development
 ```
+
+This approach helps you remember to install `license_finder`, but can
+pull in unwanted dependencies, including `bundler`. To mitigate this
+problem, see [Excluding Dependencies](#excluding-dependencies).
 
 
 ## Usage
 
-License finder will generate reports of action items - i.e., dependencies that do not fall within your license "whitelist".
+The first time you run `license_finder` it will output a report of all your project's packages.
 
 ```sh
 $ license_finder
 ```
 
-(Note) If you wish to run license_finder without the progress spinner use the --quiet option.
+Or, if you installed with bundler:
 
-License finder will include packages for all supported languages, as long as that language has a Gemfile/requirements.txt/package.json in the project directory.
+```sh
+$ bundle exec license_finder
+```
 
-On a brand new Rails project, you could expect `license_finder` to output something like the following
-(assuming you whitelisted the MIT license -- see [Configuration](#configuration)):
+The output will report that none of your packages have been
+approved.  Over time you will tell `license_finder` which packages
+are approved, so when you run this command in the future, it will
+report current action items; i.e., packages that are new or have
+never been approved.
+
+If you don't wish to see progressive output "dots", use the `--quiet`
+option.
+
+If you'd like to see debugging output, use the `--debug`
+option. `license_finder` will then output info about packages, their
+dependencies, and where and how each license was discovered. This can
+be useful when you need to track down an unexpected package or
+license.
+
+Run `license_finder help` to see other available commands, and
+`license_finder help [COMMAND]` for detailed help on a specific
+command.
+
+
+### Activation
+
+`license_finder` will find and include packages for all supported
+languages, as long as that language has a package definition in the project directory:
+
+* `Gemfile` (for `bundler`)
+* `requirements.txt` (for `pip`)
+* `package.json` (for `npm`)
+* `pom.xml` (for `maven`)
+* `build.gradle` (for `gradle`)
+* `bower.json` (for `bower`)
+* `Podfile` (for CocoaPods)
+* `rebar.config` (for `rebar`)
+* `packages/` directory (for `Nuget`)
+
+
+### Continuous Integration
+
+`license_finder` will return a non-zero exit status if there are unapproved
+dependencies. This can be useful for inclusion in a CI environment to alert you
+if someone adds an unapproved dependency to the project.
+
+
+## Approving Dependencies
+
+`license_finder` will inform you whenever you have an unapproved dependency.
+If your business decides this is an acceptable risk, the easiest way to approve
+the dependency is by running `license_finder approval add`.
+
+For example, let's assume you've added the `awesome_gpl_gem`
+to your Gemfile, which `license_finder` reports is unapproved:
+
+```sh
+$ license_finder
+Dependencies that need approval:
+awesome_gpl_gem, 1.0.0, GPL
+```
+
+Your business tells you that in this case, it's acceptable to use this
+gem. You now run:
+
+```sh
+$ license_finder approval add awesome_gpl_gem
+```
+
+If you rerun `license_finder`, you should no longer see
+`awesome_gpl_gem` in the output.
+
+To record who approved the dependency and why:
+
+```sh
+$ license_finder approval add awesome_gpl_gem --who CTO --why "Go ahead"
+```
+
+### Whitelisting
+
+Approving packages one-by-one can be tedious.  Usually your business has
+blanket policies about which packages are approved.  To tell `license_finder`
+that any package with the MIT license should be approved, run:
+
+``` sh
+$ license_finder whitelist add MIT
+```
+
+Any current or future packages with the MIT license will be excluded from the
+output of `license_finder`.
+
+You can also record `--who` and `--why` when changing the whitelist, or making
+any other decision about your project.
+
+
+## Output and Artifacts
+
+### Decisions file
+
+Any decisions you make about approvals will be recorded in a YAML file named
+`doc/dependency_decisions.yml`.
+
+This file must be committed to version control.  Rarely, you will have to
+manually resolve conflicts in it.  In this situation, keep in mind that each
+decision has an associated timestamp, and the decisions are processed
+top-to-bottom, with later decisions overwriting or appending to earlier
+decisions.
+
+### Output from `action_items`
+
+You could expect `license_finder`, which is an alias for `license_finder
+action_items` to output something like the following on a Rails project where
+MIT had been whitelisted:
 
 ```
 Dependencies that need approval:
@@ -38,189 +194,173 @@ Dependencies that need approval:
 highline, 1.6.14, ruby
 json, 1.7.5, ruby
 mime-types, 1.19, ruby
-rails, 3.2.8, other
-rdoc, 3.12, other
+rails, 3.2.8, unknown
+rdoc, 3.12, unknown
 rubyzip, 0.9.9, ruby
-xml-simple, 1.1.1, other
+xml-simple, 1.1.1, unknown
 ```
 
-The executable task will also write out a dependencies.db, dependencies.csv, and dependencies.html file in the doc/
-directory (by default -- see [Configuration](#configuration)).
+You can customize the format of the output in the same way that you customize
+[output from `report`](#output-from-report).
 
-The latter two files are human readable reports that you could send to your non-technical business partners, lawyers, etc.
+### Output from `report`
 
-`license_finder` will also return a non-zero exit status if there are
-unapproved dependencies. You could use this in a CI build, for example, to alert you whenever someone adds an
-unapproved dependency to the project.
+The `license_finder report` command will output human-readable reports that you
+could send to your non-technical business partners, lawyers, etc.  You can
+choose the format of the report (text, csv, html or markdown); see
+`license_finder --help report` for details.  The output is sent to STDOUT, so
+you can save the reports wherever you want them.  You can commit them to
+version control if you like.
 
-Run `license_finder help` to see other available commands.
+The HTML report generated by `license_finder report --format html` summarizes
+all of your project's dependencies and includes information about which need to
+be approved. The project name at the top of the report can be set with
+`license_finder project_name add`.
 
-### Manually setting licenses
+See [CONTRIBUTING.md](https://github.com/pivotal/LicenseFinder/blob/master/CONTRIBUTING.md#adding-reports)
+for advice about adding and customizing reports.
 
-When `license_finder` reports that a dependency's license is 'other', you should manually research what the actual
-license is.  When you have established the real license, you can record it with:
+
+## Manual Intervention
+
+### Setting Licenses
+
+When `license_finder` reports that a dependency's license is 'unknown',
+you should manually research what the actual license is.  When you
+have established the real license, you can record it with:
 
 ```sh
-$ license_finder license MIT my_unknown_dependency
+$ license_finder licenses add my_unknown_dependency MIT
 ```
 
-This command would assign the MIT license to the dependency `my_unknown_dependency`.
+This command would assign the MIT license to the dependency
+`my_unknown_dependency`.
 
-### Manually approving dependencies
 
-Whenever you have a dependency that falls outside of your whitelist, `license_finder` will tell you.
-If your business decides that this is an acceptable risk, you can manually approve the dependency by using the
-`license_finder approve` command.
+### Adding Hidden Dependencies
 
-For example, lets assume you've only
-whitelisted the "MIT" license in your `config/license_finder.yml`. You then add the `awesome_gpl_gem` to your Gemfile,
-which we'll assume is licensed with the `GPL` license. You then run `license_finder` and see
-the gem listed in the output:
+`license_finder` can track dependencies that your package managers
+don't know about (JS libraries that don't appear in your
+Gemfile/requirements.txt/package.json, etc.)
 
 ```sh
-awesome_gpl_gem, 1.0.0, GPL
+$ license_finder dependencies add my_js_dep MIT 0.1.2
 ```
 
-Your business tells you that in this case, it's acceptable to use this gem. You now run:
+Run `license_finder dependencies help` for
+additional documentation about managing these dependencies.
 
-```sh
-$ license_finder approve awesome_gpl_gem
-```
-
-If you rerun `license_finder`, you should no longer see `awesome_gpl_gem` in the output.
-
-### Managing license whitelist
-
-Licenses can be added to a whitelist that tells LicenseFinder to automatically approve dependencies using the specified licenses.
-These licenses can be managed with the `whitelist` command.
-
-To list licenses currently on the whitelist:
-
-```sh
-$ license_finder whitelist list
-```
-
-To add a licenses to the whitelist:
-
-```sh
-$ license_finder whitelist add MIT [BSD [...]]
-```
-
-To remove a licenses from the whitelist:
-
-```sh
-$ license_finder whitelist remove MIT [BSD [...]]
-```
-
-### Managing ignored Bundler groups
-
-Bundler groups can be added to an ignore list which will prevent LicenseFinder from evaluating their licenses.
-These groups can be managed with the `ignored_bundler_groups` command.
-
-To list currently ignored Bundler groups:
-
-```sh
-$ license_finder ignored_bundler_groups list
-```
-
-To add a group to the ignored Bundler groups:
-
-```sh
-$ license_finder ignored_bundler_groups add development
-```
-
-To remove a group from the ignored Bundler groups:
-
-```sh
-$ license_finder ignored_bundler_groups remove development
-```
-
-### Managing unsupported dependencies
-
-license_finder can track dependencies that Bundler/PyPi/NPM doesn't know about (JS libraries that don't
-appear in your Gemfile/requirements.txt/package.json, etc.)
-
-```sh
-$ license_finder dependencies add MIT my_js_dep 0.1.2
-```
-
-To automatically approve a non-bundler dependency when you add it, use:
-
-```sh
-$ license_finder dependencies add MIT my_js_dep 0.1.2 --approve
-```
-
-The version is optional.  Run `license_finder dependencies help` for additional documentation about
-managing non-Bundler dependencies.
-
-license_finder cannot automatically detect when a non-Bundler dependency has been removed from your
-project, so you can use:
+`license_finder` cannot automatically detect when one of these
+dependencies has been removed from your project, so you can use:
 
 ```sh
 $ license_finder dependencies remove my_js_dep
 ```
 
-### Managing project name
+### Excluding Dependencies
 
-The HTML report generated by license_finder will have the name of your project at the top. By default, this is set to the name of your working directory. However, this can be changed using the command line:
+Sometimes a project will have development or test dependencies which
+you don't want to track.  You can exclude theses dependencies by running
+`license_finder ignored_groups`.  (Currently this only works for packages
+managed by Bundler, NPM, and Nuget.)
 
-```sh
-$ license_finder project_name set 'My Project Name'
-```
+On rare occasions a package manager will report an individual dependency
+that you want to exclude from all reports, even though it is approved.
+You can exclude an individual dependency by running
+`license_finder ignored_dependencies`.  Think carefully before adding
+dependencies to this list.  A likely item to exclude is `bundler`,
+since it is a common dependency whose version changes from machine to
+machine.  Adding it to the `ignored_dependencies` would prevent it
+(and its oscillating versions) from appearing in reports.
 
-The changes will be reflected in the report the next time you run license_finder.
+### Blacklisting Licenses
+
+Some projects will have a list of licenses that cannot be used.  You can add
+these licenses to the blacklist `license_finder blacklist add`.  Any dependency
+that has exclusively blacklisted licenses will always appear in the action
+items, even if someone attempts to manually approve or whitelist it.  However,
+if a dependency has even one license outside of the blacklist, it can still be
+manually approved or whitelisted.
 
 
 ## Configuration
 
-The first time you run `license_finder` it will create a default configuration file `./config/license_finder.yml`:
+Be default, `license_finder` expects the decisions file to be stored at
+`doc/dependency_decisions.yml`.  All commands can be passed `--decisions_file`
+to override this location.
+
+### Of Package Managers
+
+If you have a gradle project, you can invoke gradle with a custom script by
+passing (for example) `--gradle_command gradlew` to `license_finder` or
+`license_finder report`.
+
+
+Similarly you can invoke a custom rebar script with `--rebar_command rebar2`.
+If you store rebar dependencies in a custom directory (by setting `deps_dir` in
+`rebar.config`), set `--rebar_deps_dir`.
+
+### Saving Configuration
+
+It may be difficult to remember to pass command line options to every command.
+In some of these cases you can store default values in a YAML formatted config
+file. `license_finder` looks for this file in `config/license_finder.yml`.
+
+As an example, the file might look like this:
 
 ```yaml
 ---
-whitelist:
-#- MIT
-#- Apache 2.0
-ignore_groups:
-#- test
-#- development
-dependencies_file_dir: './doc/'
-project_name: My Project Name
+decisions_file: './some_path/decisions.yml'
+gradle_command: './gradlew'
+rebar_command: './rebarw'
+rebar_deps_dir: './rebar_deps'
 ```
 
-By modifying this file, you can configure license_finder's behavior. `Whitelisted` licenses will be automatically approved
-and `ignore_groups` will limit which dependencies are included in your license report.  You can store the license database
-and text files in another directory by changing `dependencies_file_dir`.
+### Gradle Projects
 
+`license_finder` supports both Gradle 1.x and Gradle 2.x. You need to have installed
+the license-gradle-plugin in your project:
+[https://github.com/hierynomus/license-gradle-plugin](https://github.com/hierynomus/license-gradle-plugin)
 
-## HTML Report
+By default, `license_finder` will report on Gradle's "runtime" dependencies. If
+you want to generate a report for some other dependency configuration (e.g.
+Android projects will sometimes specify their meaningful dependencies in the
+"compile" group), you can specify it in your project's `build.gradle`:
 
-The HTML report generated by license_finder has two sections, an overview at the top, and then a series of dependency summaries afterwards.
+```
+// Must come *after* the 'apply plugin: license' line
 
-![HTML Report](files/report_breakdown.png)
-
-The individual dependency summary follows a pattern like this:
-
-![HTML Report](files/dependency_breakdown.png)
-
-## Upgrade for pre 0.8.0 users
-
-If you wish to cleanup your root directory you can run:
-
-```sh
-$ license_finder move
+downloadLicenses {
+  dependencyConfiguration "compile"
+}
 ```
 
-This will move your dependencies.* files to the /doc directory and update the config.
+
+### Maven Projects
+
+`license_finder` supports Maven.
 
 
-## Compatibility
+## Requirements
 
-license_finder is compatible with ruby >= 1.9, and jruby.
+`license_finder` requires ruby >= 1.9, or jruby.
 
 
-## A note to gem authors / maintainers
+## Upgrading
 
-For the good of humanity, please add a license to your gemspec!
+To upgrade from `license_finder` version 1.2 to 2.0, see
+[`license_finder_upgrade`](https://github.com/mainej/license_finder_upgrade).
+To upgrade to 2.0 from a version lower than 1.2, first upgrade to 1.2, and run
+`license_finder` at least once.  This will ensure that the `license_finder`
+database is in a state which `license_finder_upgrade` understands.
+
+
+## A Plea to Package Authors and Maintainers
+
+Please add a license to your package specs! Most packaging systems
+allow for the specification of one or more licenses.
+
+For example, Ruby Gems can specify a license by name:
 
 ```ruby
 Gem::Specification.new do |s|
@@ -229,7 +369,7 @@ Gem::Specification.new do |s|
 end
 ```
 
-And add a `LICENSE` file to your gem that contains your license text.
+And save a `LICENSE` file which contains your license text in your repo.
 
 
 ## Support
@@ -240,13 +380,8 @@ And add a `LICENSE` file to your gem that contains your license text.
 
 ## Contributing
 
-* Fork the project
-* Create a feature branch
-* Make your feature addition or bug fix (with tests)
-* Rebase on top of master
-* Send a pull request
+See [CONTRIBUTING.md](https://github.com/pivotal/LicenseFinder/blob/master/CONTRIBUTING.md).
 
-To successfully run the test suite, you will need node.js, and python installed.
 
 ## License
 

@@ -1,90 +1,67 @@
+require "license_finder/license/text"
+require "license_finder/license/template"
+
+require "license_finder/license/matcher"
+require "license_finder/license/header_matcher"
+require "license_finder/license/any_matcher"
+require "license_finder/license/none_matcher"
+
+require "license_finder/license/definitions"
+
 module LicenseFinder
-  module License
+  class License
     class << self
       def all
-        @all ||= []
+        @all ||= Definitions.all
       end
 
-      def find_by_name(license_name)
-        all.detect { |l| l.names.map(&:downcase).include? license_name.to_s.downcase }
-      end
-    end
-
-    class Text
-      def initialize(text)
-        @text = normalized(text)
+      def find_by_name(name)
+        name ||= "unknown"
+        all.detect { |l| l.matches_name? name } || Definitions.build_unrecognized(name)
       end
 
-      def to_s
-        @text
-      end
-
-      private
-
-      def normalized(text)
-        text.gsub(/\s+/, ' ').gsub(/['`"]{1,2}/, "\"")
+      def find_by_text(text)
+        all.detect { |l| l.matches_text? text }
       end
     end
 
-    class Base
-      class << self
-        attr_accessor :license_url, :alternative_names
+    def initialize(settings)
+      @short_name  = settings.fetch(:short_name)
+      @pretty_name = settings.fetch(:pretty_name, short_name)
+      @other_names = settings.fetch(:other_names, [])
+      @url         = settings.fetch(:url)
+      @matcher     = settings.fetch(:matcher) { Matcher.from_template(Template.named(short_name)) }
+    end
 
-        def inherited(descendant)
-          License.all << descendant
-        end
+    attr_reader :url
 
-        def names
-          ([demodulized_name, pretty_name] + self.alternative_names).uniq
-        end
+    def name
+      pretty_name
+    end
 
-        def alternative_names
-          @alternative_names ||= []
-        end
+    def matches_name?(name)
+      names.map(&:downcase).include? name.to_s.downcase
+    end
 
-        def demodulized_name
-          name.gsub(/^.*::/, '')
-        end
+    def matches_text?(text)
+      matcher.matches_text?(text)
+    end
 
-        def slug
-          demodulized_name.downcase
-        end
+    def eql?(other)
+      name == other.name
+    end
 
-        def pretty_name
-          demodulized_name
-        end
+    def hash
+      name.hash
+    end
 
-        def license_text
-          unless defined?(@license_text)
-            template = ROOT_PATH.join("data", "licenses", "#{demodulized_name}.txt")
+    private
 
-            @license_text = Text.new(template.read).to_s if template.exist?
-          end
-          @license_text
-        end
+    attr_reader :short_name, :pretty_name, :other_names
+    attr_reader :matcher
 
-        def license_regex
-          /#{Regexp.escape(license_text).gsub(/<[^<>]+>/, '(.*)')}/ if license_text
-        end
-      end
-
-      def initialize(text)
-        self.text = text
-      end
-
-      attr_reader :text
-
-      def text=(text)
-        @text = Text.new(text).to_s
-      end
-
-      def matches?
-        !!(text =~ self.class.license_regex if self.class.license_regex)
-      end
+    def names
+      ([short_name, pretty_name] + other_names).uniq
     end
   end
-end
-
-Pathname.glob(LicenseFinder::ROOT_PATH.join('license_finder', 'license', "*.rb")) do |license|
-  require license
 end

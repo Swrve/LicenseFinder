@@ -1,23 +1,13 @@
-# encoding: UTF-8
-
 module LicenseFinder
-  class HtmlReport < DependencyReport
+  class HtmlReport < ErbReport
     private
-    def unapproved_dependencies
-      dependencies.reject(&:approved?)
+
+    def template_name
+      "html_report"
     end
 
-    def grouped_dependencies
-      find_name = lambda do |dep|
-        license = License.find_by_name(dep.license.name)
-        if license
-          license.pretty_name
-        else
-          dep.license.name
-        end
-      end
-
-      dependencies.group_by(&find_name).sort_by { |_, group| group.size }.reverse
+    def bootstrap
+      TEMPLATE_PATH.join("bootstrap.css").read
     end
   end
 end

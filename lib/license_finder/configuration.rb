@@ -1,108 +1,56 @@
-require "rake"
-
 module LicenseFinder
   class Configuration
-    attr_accessor :whitelist, :ignore_groups, :dependencies_dir, :project_name
-
-    def self.config_file_path
-      File.join('.', 'config', 'license_finder.yml')
+    def self.with_optional_saved_config(primary_config)
+      project_path = Pathname(primary_config.fetch(:project_path, Pathname.pwd)).expand_path
+      config_file =  project_path.join('config', 'license_finder.yml')
+      saved_config = config_file.exist? ? YAML.load(config_file.read) : {}
+      new(primary_config, saved_config)
     end
 
-    def self.ensure_default
-      make_config_file unless File.exists?(config_file_path)
-      new
+    def initialize(primary_config, saved_config)
+      @primary_config = primary_config
+      @saved_config = saved_config
     end
 
-    def self.make_config_file
-      FileUtils.mkdir_p(File.join('.', 'config'))
-      FileUtils.cp(
-        ROOT_PATH.join('..', 'files', 'license_finder.yml'),
-        config_file_path
-      )
+    def valid_project_path?
+       if get(:project_path)
+         return project_path.exist?
+       end
+      true
     end
 
-    def self.move!
-      config = config_hash('dependencies_file_dir' => './doc/')
-      File.open(config_file_path, 'w') do |f|
-        f.write YAML.dump(config)
-      end
-
-      FileUtils.mkdir_p("doc")
-      FileUtils.mv(Dir["dependencies.*"], "doc")
+    def gradle_command
+      get(:gradle_command) || "gradle"
     end
 
-    def self.config_hash(config)
-      if File.exists?(config_file_path)
-        yaml = File.read(config_file_path)
-        config = YAML.load(yaml).merge config
-      end
-      config
+    def rebar_command
+      get(:rebar_command) || "rebar"
     end
 
-    def initialize(config={})
-      config = self.class.config_hash(config)
-
-      @whitelist = config['whitelist'] || []
-      @ignore_groups = (config["ignore_groups"] || [])
-      @dependencies_dir = config['dependencies_file_dir'] || './doc/'
-      @project_name = config['project_name'] || determine_project_name
-      FileUtils.mkdir_p(@dependencies_dir)
+    def rebar_deps_dir
+      path = get(:rebar_deps_dir) || "deps"
+      project_path.join(path).expand_path
     end
 
-    def database_uri
-      URI.escape(File.expand_path(File.join(dependencies_dir, "dependencies.db")))
+    def decisions_file_path
+      path = get(:decisions_file) || "doc/dependency_decisions.yml"
+      project_path.join(path).expand_path
     end
 
-    def dependencies_yaml
-      File.join(dependencies_dir, "dependencies.yml")
-    end
-
-    def dependencies_text
-      File.join(dependencies_dir, "dependencies.csv")
-    end
-
-    def dependencies_detailed_text
-      File.join(dependencies_dir, "dependencies_detailed.csv")
-    end
-
-    def dependencies_legacy_text
-      File.join(dependencies_dir, "dependencies.txt")
-    end
-
-    def dependencies_html
-      File.join(dependencies_dir, "dependencies.html")
-    end
-
-    def dependencies_markdown
-      File.join(dependencies_dir, "dependencies.md")
-    end
-
-    def whitelisted?(license_name)
-      license = License.find_by_name(license_name) || license_name
-      whitelisted_licenses.include? license
-    end
-
-    def save
-      File.open(Configuration.config_file_path, 'w') do |file|
-        file.write({
-          'whitelist' => @whitelist.uniq,
-          'ignore_groups' => @ignore_groups.uniq,
-          'dependencies_file_dir' => @dependencies_dir,
-          'project_name' => @project_name
-        }.to_yaml)
-      end
+    def project_path
+      Pathname(path_prefix).expand_path
     end
 
     private
 
-    def whitelisted_licenses
-      whitelist.map do |license_name|
-        License.find_by_name(license_name) || license_name
-      end.compact
+    attr_reader :saved_config
+
+    def get(key)
+      @primary_config[key.to_sym] || @saved_config[key.to_s]
     end
 
-    def determine_project_name
-      File.basename(Dir.getwd)
+    def path_prefix
+      get(:project_path) || ''
     end
   end
 end

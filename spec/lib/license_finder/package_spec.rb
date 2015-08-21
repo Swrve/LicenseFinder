@@ -2,97 +2,175 @@ require 'spec_helper'
 
 module LicenseFinder
   describe Package do
-    subject { described_class.new(gemspec) }
-
-    let(:gemspec) do
-      Gem::Specification.new do |s|
-        s.name = 'spec_name'
-        s.version = '2.1.3'
-        s.summary = 'summary'
-        s.description = 'description'
-        s.homepage = 'homepage'
-
-        s.add_dependency 'foo'
-      end
+    subject do
+      described_class.new(
+        "a package",
+        "1.3.1",
+        authors: "the authors",
+        summary: "a summary",
+        description: "a description",
+        homepage: "a homepage",
+        groups: %w[dev test],
+        children: %w[child-1 child2],
+        install_path: "some/package/path",
+        spec_licenses: %w[MIT GPL]
+      )
     end
 
-    def fixture_path(fixture)
-      Pathname.new(File.join(File.dirname(__FILE__), '..', '..', '..', 'spec', 'fixtures', fixture)).realpath.to_s
+    its(:name) { should == "a package" }
+    its(:version) { should == "1.3.1" }
+    its(:authors){should == 'the authors'}
+    its(:summary) { should == "a summary" }
+    its(:description) { should == "a description" }
+    its(:homepage) { should == "a homepage" }
+    its(:groups) { should == %w[dev test] }
+    its(:children) { should == %w[child-1 child2] }
+    its(:install_path) { should eq "some/package/path" }
+
+    it 'has defaults' do
+      subject = described_class.new(nil, nil)
+      expect(subject.name).to be_nil
+      expect(subject.version).to be_nil
+      expect(subject.authors).to eq ""
+      expect(subject.summary).to eq ""
+      expect(subject.description).to eq ""
+      expect(subject.homepage).to eq ""
+      expect(subject.groups).to eq []
+      expect(subject.children).to eq []
+      expect(subject.install_path).to be_nil
+      expect(subject.license_names_from_spec).to eq []
+      expect(subject.licenses.map(&:name)).to eq ['unknown']
     end
 
-    its(:name) { should == 'spec_name 2.1.3' }
-    its(:dependency_name) { should == 'spec_name' }
-    its(:dependency_version) { should == '2.1.3' }
-
-    describe "#license" do
-      subject do
-        details = Package.new(gemspec)
-        details.stub(:license_files).and_return([license_file])
-        details
+    describe '#licenses' do
+      def stub_license_files(*license_names)
+        license_files = license_names.map do |license_name|
+          double(:file, license: License.find_by_name(license_name), path: "some/path")
+        end
+        allow(LicenseFiles).to receive(:find).with("some/package/path")
+          .and_return(license_files)
       end
 
-      let(:license_file) { PossibleLicenseFile.new('gem', 'gem/license/path') }
-
-      it "returns the license from the gemspec if provided" do
-        gemspec.stub(:license).and_return('Some License')
-
-        subject.license.should == "Some License"
+      it "are not required" do
+        subject = described_class.new(nil, nil)
+        expect(subject.licenses.map(&:name)).to eq ['unknown']
       end
 
-      it "returns the matched license if detected" do
-        license_file.stub(:license).and_return('Detected License')
+      describe "decided by user" do
+        it "returns all decided licenses" do
+          subject = described_class.new(nil, nil)
+          subject.decide_on_license(License.find_by_name("MIT"))
+          subject.decide_on_license(License.find_by_name("GPL"))
+          expect(subject.licenses.map(&:name)).to match_array ["MIT", "GPL"]
+        end
 
-        subject.license.should == "Detected License"
-      end
+        it "de-duplicates across license aliases" do
+          subject = described_class.new(nil, nil)
+          subject.decide_on_license(License.find_by_name("MIT"))
+          subject.decide_on_license(License.find_by_name("Expat"))
+          expect(subject.licenses.map(&:name)).to eq ["MIT"]
+        end
 
-      it "returns 'other' otherwise" do
-        license_file.stub(:license).and_return(nil)
+        it "trumps licenses from the spec" do
+          subject = described_class.new(nil, nil, spec_licenses: ["GPL"])
+          subject.decide_on_license(License.find_by_name("MIT"))
+          expect(subject.licenses.map(&:name)).to eq ["MIT"]
+        end
 
-        subject.license.should == "other"
-      end
-    end
-
-    describe "#license_files" do
-      it "delegates to the license files helper" do
-        PossibleLicenseFiles.should_receive(:new).with(gemspec.full_gem_path) { double(find: [] )}
-        subject.license_files
-      end
-    end
-
-    describe "#groups" do
-      context "bundler_dependency is present" do
-        subject { described_class.new(gemspec, bundler_dependency) }
-
-        let(:bundler_dependency) { double(:dependency, groups: [1, 2, 3]) }
-
-        it "returns bundler dependency's groups" do
-          subject.groups.should == bundler_dependency.groups
+        it "trumps licenses from the install path" do
+          stub_license_files 'Detected License'
+          subject = described_class.new(nil, nil, install_path: "some/package/path")
+          subject.decide_on_license(License.find_by_name("MIT"))
+          expect(subject.licenses.map(&:name)).to eq ["MIT"]
         end
       end
 
-      context "bundler_dependency is nil" do
-        it "returns empty array" do
-          subject.groups.should == []
+      describe "from the spec" do
+        it "converts the names to licenses" do
+          subject = described_class.new(nil, nil, spec_licenses: ["MIT", "GPL"])
+          expect(subject.licenses.map(&:name)).to match_array ["MIT", "GPL"]
+        end
+
+        it "de-duplicates across license aliases" do
+          subject = described_class.new(nil, nil, spec_licenses: ["MIT", "Expat"])
+          expect(subject.licenses.map(&:name)).to eq ["MIT"]
+        end
+
+        it "trumps licenses from the install path" do
+          stub_license_files 'Detected License'
+          subject = described_class.new(nil, nil, spec_licenses: ["MIT"], install_path: "some/package/path")
+          expect(subject.licenses.map(&:name)).to eq ["MIT"]
+        end
+      end
+
+      describe "from the install path" do
+        it "uses the licenses reported by files in the install path" do
+          stub_license_files 'MIT', 'GPL'
+          subject = described_class.new(nil, nil, install_path: "some/package/path")
+          expect(subject.licenses.map(&:name)).to eq ["MIT", "GPL"]
+        end
+
+        it "de-duplicates across license aliases" do
+          stub_license_files 'MIT', 'Expat'
+          subject = described_class.new(nil, nil, install_path: "some/package/path")
+          expect(subject.licenses.map(&:name)).to eq ["MIT"]
         end
       end
     end
-  end
 
-  describe PythonPackage do
-    it "calls out to Pip if no license is found using conventional means" do
-      allow(Pip).to receive(:license_for).and_return("PSF")
+    describe '#blacklisted?' do
+      it 'defaults to false' do
+        expect(subject.blacklisted?).to eq(false)
+      end
 
-      package = PythonPackage.new(OpenStruct.new(name: 'jasmine', version: '1.3.1', full_gem_path: '/foo/bar'))
-
-      expect(package.determine_license).to eq("PSF")
+      it 'can be set by blacklisted!' do
+        subject.blacklisted!
+        expect(subject.blacklisted?).to eq(true)
+      end
     end
 
-    it "returns other if no license could be found" do
-      allow(Pip).to receive(:license_for).and_return("other")
+    describe '#approved?' do
+      it 'returns false by default' do
+        expect(subject.approved?).to eq(false)
+      end
 
-      package = PythonPackage.new(OpenStruct.new(name: 'jasmine', version: '1.3.1', full_gem_path: '/foo/bar'))
+      it 'returns true when approved manually' do
+        subject.approved_manually!('I approve of this dependency')
+        expect(subject.approved?).to eq(true)
+      end
 
-      expect(package.determine_license).to eq("other")
+      it 'returns true when whitelisted' do
+        subject.whitelisted!
+        expect(subject.approved?).to eq(true)
+      end
+
+      it 'returns false when blacklisted' do
+        subject.blacklisted!
+        expect(subject.approved?).to eq(false)
+      end
+    end
+
+    describe '#eql?' do
+      it 'returns true if package name, version, and licenses match' do
+        p1 = Package.new('package', '0.0.1')
+        p2 = Package.new('package', '0.0.1')
+        p3 = Package.new('foo', 'foo')
+
+        expect(p1.eql?(p2)).to be true
+        expect(p1.eql?(p3)).to be false
+
+        expect(p1.hash).to eq p2.hash
+      end
+    end
+
+    describe '#<=>' do
+      it 'sorts by name' do
+        p1 = Package.new('bob')
+        p2 = Package.new('jim')
+        p3 = Package.new('dan')
+
+        expect([p2, p1, p3].sort).to eq([p1, p3, p2])
+      end
     end
   end
 end

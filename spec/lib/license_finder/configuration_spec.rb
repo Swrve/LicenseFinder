@@ -2,123 +2,121 @@ require "spec_helper"
 
 module LicenseFinder
   describe Configuration do
-    let(:config) { described_class.new }
-
-    let(:klass) { described_class }
-
-    describe '.new' do
-      let(:attributes) do
-        {
-          "whitelist" => ["FooLicense", "BarLicense"],
-          "ignore_groups" => [:test, :development],
-          "dependencies_file_dir" => ".",
-          "project_name" => "my_app"
-        }
+    describe ".with_optional_saved_config" do
+      it "should init and use saved config" do
+        subject = described_class.with_optional_saved_config({project_path: fixture_path(".")})
+        expect(subject.gradle_command).to eq('gradlew')
       end
 
-      subject { klass.new(attributes) }
-
-      context "with known attributes" do
-        it "should set the all of the attributes on the instance" do
-          subject.whitelist.should == attributes['whitelist']
-          subject.ignore_groups.should == attributes['ignore_groups']
-          subject.dependencies_dir.should == attributes['dependencies_file_dir']
-          subject.project_name.should == attributes['project_name']
-        end
+      it "prepends the project_path to the config file path" do
+        subject = described_class.with_optional_saved_config({project_path: "other_directory"})
+        expect(subject.send(:saved_config)).to eq({})
       end
     end
 
-    describe "#database_uri" do
-      it "should URI escape absolute path the dependencies_file_dir" do
-        config = described_class.new('dependencies_file_dir' => 'test path')
-        config.database_uri.should =~ /test%20path\/dependencies\.db$/
+    describe "#valid_project_path?" do
+      it "returns false when the path does not exist" do
+        subject = described_class.with_optional_saved_config({project_path: '/path/that/does/not/exist'})
+        expect(subject.valid_project_path?).to be(false)
+      end
+
+      it "returns true when the path exists" do
+        subject = described_class.with_optional_saved_config({project_path: '/'})
+        expect(subject.valid_project_path?).to be(true)
+      end
+
+      it "returns true if the path is not provided" do
+        subject = described_class.with_optional_saved_config({})
+        expect(subject.valid_project_path?).to be(true)
       end
     end
 
-    describe "#whitelist" do
-      it "should default to an empty array" do
-        klass.new.whitelist.should == []
+    describe "gradle_command" do
+      it "prefers primary value" do
+        subject = described_class.new(
+          {gradle_command: "primary"},
+          {"gradle_command" => "secondary"}
+        )
+        expect(subject.gradle_command).to eq "primary"
+      end
+
+      it "accepts saved value" do
+        subject = described_class.new(
+          {gradle_command: nil},
+          {"gradle_command" => "secondary"}
+        )
+        expect(subject.gradle_command).to eq "secondary"
+      end
+
+      it "has default" do
+        subject = described_class.new(
+          {gradle_command: nil},
+          {"gradle_command" => nil}
+        )
+        expect(subject.gradle_command).to eq "gradle"
       end
     end
 
-    describe "#project_name" do
-      let(:directory_name) { "test_dir" }
-
-      before do
-        Configuration.stub(:config_hash).and_return({})
-        Dir.stub(:getwd).and_return("/path/to/#{directory_name}")
+    describe "decisions_file" do
+      it "prefers primary value" do
+        subject = described_class.new(
+          {decisions_file: "primary"},
+          {"decisions_file" => "secondary"}
+        )
+        expect(subject.decisions_file_path.to_s).to end_with "primary"
       end
 
-      it "should default to the directory name" do
-        klass.new.project_name.should == directory_name
+      it "accepts saved value" do
+        subject = described_class.new(
+          {decisions_file: nil},
+          {"decisions_file" => "secondary"}
+        )
+        expect(subject.decisions_file_path.to_s).to end_with "secondary"
+      end
+
+      it "has default" do
+        subject = described_class.new(
+          {decisions_file: nil},
+          {"decisions_file" => nil}
+        )
+        expect(subject.decisions_file_path.to_s).to end_with "doc/dependency_decisions.yml"
+      end
+
+      it "prepends project path to default path if project_path option is set" do
+        subject = described_class.new({project_path: "magic_path"}, {})
+        expect(subject.decisions_file_path.to_s).to end_with "magic_path/doc/dependency_decisions.yml"
+      end
+
+      it "prepends project path to provided value" do
+        subject = described_class.new({decisions_file: "primary",
+            project_path: "magic_path"},
+            {"decisions_file" => "secondary"}
+        )
+        expect(subject.decisions_file_path.to_s).to end_with "magic_path/primary"
       end
     end
 
-    describe "whitelisted?" do
-      context "canonical name whitelisted" do
-        before { config.whitelist = [License::Apache2.names[rand(License::Apache2.names.count)]]}
-
-        let(:possible_license_names) { License::Apache2.names }
-
-        it "should return true if if the license is the canonical name, pretty name, or alternative name of the license" do
-          possible_license_names.each do |name|
-            config.whitelisted?(name).should be_true, "expected #{name} to be whitelisted, but wasn't."
-          end
-        end
-
-        it "should be case-insensitive" do
-          possible_license_names.map(&:downcase).each do |name|
-            config.whitelisted?(name).should be_true, "expected #{name} to be whitelisted, but wasn't"
-          end
-        end
-      end
-    end
-
-    describe "#save" do
-      let(:tmp_yml) { '.tmp.configuration_spec.yml' }
-      let(:yaml) { YAML.load(File.read(tmp_yml)) }
-
-      before do
-        Configuration.stub(:config_file_path).and_return(tmp_yml)
-        config.whitelist = ['my_gem']
-        config.ignore_groups = ['other_group', 'test']
-        config.project_name = "New Project Name"
-        config.dependencies_dir = "./deps"
+    describe "rebar_deps_dir" do
+      it "has default" do
+        subject = described_class.new(
+            {rebar_deps_dir: nil},
+            {"rebar_deps_dir" => nil}
+        )
+        expect(subject.rebar_deps_dir.to_s).to end_with "deps"
       end
 
-      after do
-        File.delete(tmp_yml)
+      it "prepends project path to default path if project_path option is set" do
+        subject = described_class.new({project_path: "magic_path"}, {})
+        expect(subject.rebar_deps_dir.to_s).to end_with "magic_path/deps"
       end
 
-      describe "writes the configuration attributes to the yaml file" do
-        before { config.save }
-
-        it "writes the whitelist" do
-          yaml["whitelist"].should include("my_gem")
-        end
-
-        it "writes the ignored bundler groups" do
-          yaml["ignore_groups"].should include("other_group")
-          yaml["ignore_groups"].should include("test")
-        end
-
-        it "writes the dependencies_dir" do
-          yaml["dependencies_file_dir"].should eq("./deps")
-        end
-
-        it "writes the project name" do
-          yaml["project_name"].should eq("New Project Name")
-        end
-      end
-
-      it "doesn't write duplicate entries" do
-        config.whitelist << 'my_gem'
-        config.ignore_groups << 'test'
-
-        config.save
-
-        yaml["whitelist"].count("my_gem").should == 1
-        yaml["ignore_groups"].count("test").should == 1
+      it "prepends project path to provided value" do
+        subject = described_class.new(
+            {rebar_deps_dir: "primary",
+             project_path: "magic_path"},
+            {"rebar_deps_dir" => "secondary"}
+        )
+        expect(subject.rebar_deps_dir.to_s).to end_with "magic_path/primary"
       end
     end
   end
